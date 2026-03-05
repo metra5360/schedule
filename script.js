@@ -18,6 +18,11 @@
 
   const STORAGE_KEY = "scheduleData";
   const DEBOUNCE_MS = 400;
+  const GIST_STORAGE_TOKEN = "scheduleGistToken";
+  const GIST_STORAGE_ID = "scheduleGistId";
+  const GIST_FILENAME = "schedule.json";
+  const GIST_API = "https://api.github.com/gists";
+  const GIST_DEBOUNCE_MS = 2000;
 
   const defaultSchedule = Object.fromEntries(DAYS.map((d) => [d, []]));
 
@@ -92,8 +97,162 @@
     if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
     saveDebounceTimer = setTimeout(function () {
       saveSchedule(data);
+      if (getGistToken()) scheduleGistSave(data);
       saveDebounceTimer = null;
     }, DEBOUNCE_MS);
+  }
+
+  function getGistToken() {
+    try {
+      return localStorage.getItem(GIST_STORAGE_TOKEN) || "";
+    } catch (_) {
+      return "";
+    }
+  }
+  function setGistToken(token) {
+    localStorage.setItem(GIST_STORAGE_TOKEN, (token || "").trim());
+  }
+  function clearGistToken() {
+    localStorage.removeItem(GIST_STORAGE_TOKEN);
+    localStorage.removeItem(GIST_STORAGE_ID);
+  }
+  function getGistId() {
+    return localStorage.getItem(GIST_STORAGE_ID) || "";
+  }
+  function setGistId(id) {
+    if (id) localStorage.setItem(GIST_STORAGE_ID, id);
+    else localStorage.removeItem(GIST_STORAGE_ID);
+  }
+
+  function setSyncStatus(text, isError) {
+    const el = $("syncStatus");
+    if (!el) return;
+    el.textContent = text || "";
+    el.className = "sync-status" + (isError ? " sync-status-error" : "");
+  }
+
+  let gistSaveTimer = null;
+  function scheduleGistSave(data) {
+    if (!getGistToken()) return;
+    if (gistSaveTimer) clearTimeout(gistSaveTimer);
+    gistSaveTimer = setTimeout(function () {
+      gistSaveTimer = null;
+      saveToGist(data);
+    }, GIST_DEBOUNCE_MS);
+  }
+
+  async function loadFromGist() {
+    const token = getGistToken();
+    if (!token) return null;
+    setSyncStatus("Завантаження з хмари…");
+    try {
+      const id = getGistId();
+      let content = null;
+      let gistId = id;
+      if (id) {
+        const res = await fetch(GIST_API + "/" + id, {
+          headers: { Authorization: "token " + token },
+        });
+        if (res.ok) {
+          const gist = await res.json();
+          const file = gist.files && gist.files[GIST_FILENAME];
+          if (file && file.content) content = file.content;
+        } else {
+          setGistId("");
+          gistId = "";
+        }
+      }
+      if (!gistId) {
+        const listRes = await fetch(GIST_API + "?per_page=100", {
+          headers: { Authorization: "token " + token },
+        });
+        if (!listRes.ok) throw new Error("Не вдалося отримати список Gist");
+        const list = await listRes.json();
+        const found = list.find(function (g) {
+          return g.files && g.files[GIST_FILENAME];
+        });
+        if (found) {
+          gistId = found.id;
+          setGistId(gistId);
+          const getRes = await fetch(GIST_API + "/" + gistId, {
+            headers: { Authorization: "token " + token },
+          });
+          if (getRes.ok) {
+            const full = await getRes.json();
+            const file = full.files && full.files[GIST_FILENAME];
+            if (file && file.content) content = file.content;
+          }
+        }
+      }
+      if (content) {
+        const parsed = JSON.parse(content);
+        const valid = validateSchedule(parsed);
+        if (valid) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(valid));
+          setSyncStatus("Синхронізовано з хмарою.");
+          return valid;
+        }
+      }
+      if (!gistId) {
+        const created = await createGist(getSchedule());
+        if (created) setGistId(created);
+        setSyncStatus("Gist створено. Розклад збережено в хмарі.");
+      } else {
+        setSyncStatus("Підключено. Розклад у хмарі порожній або невалідний.");
+      }
+      return null;
+    } catch (e) {
+      setSyncStatus("Помилка: " + (e.message || "невідома"), true);
+      return null;
+    }
+  }
+
+  async function createGist(data) {
+    const token = getGistToken();
+    if (!token) return null;
+    const res = await fetch(GIST_API, {
+      method: "POST",
+      headers: {
+        Authorization: "token " + token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        description: "Мій розклад уроків",
+        public: false,
+        files: { [GIST_FILENAME]: { content: JSON.stringify(data, null, 2) } },
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(function () { return {}; });
+      throw new Error(err.message || "Не вдалося створити Gist");
+    }
+    const gist = await res.json();
+    return gist.id || null;
+  }
+
+  async function saveToGist(data) {
+    const token = getGistToken();
+    const id = getGistId();
+    if (!token || !id) return;
+    try {
+      const res = await fetch(GIST_API + "/" + id, {
+        method: "PATCH",
+        headers: {
+          Authorization: "token " + token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          files: { [GIST_FILENAME]: { content: JSON.stringify(data, null, 2) } },
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(function () { return {}; });
+        throw new Error(err.message || "Не вдалося оновити Gist");
+      }
+      setSyncStatus("Збережено в хмарі.");
+    } catch (e) {
+      setSyncStatus("Помилка збереження: " + (e.message || "невідома"), true);
+    }
   }
 
   const $ = (id) => document.getElementById(id);
@@ -292,6 +451,7 @@
       const schedule = getSchedule();
       if (schedule[day]) schedule[day].splice(index, 1);
       saveSchedule(schedule);
+      if (getGistToken()) scheduleGistSave(schedule);
       renderLessons();
     });
 
@@ -301,6 +461,7 @@
       const arr = schedule[day];
       [arr[index - 1], arr[index]] = [arr[index], arr[index - 1]];
       saveSchedule(schedule);
+      if (getGistToken()) scheduleGistSave(schedule);
       renderLessons();
     });
 
@@ -310,6 +471,7 @@
       if (index >= arr.length - 1) return;
       [arr[index], arr[index + 1]] = [arr[index + 1], arr[index]];
       saveSchedule(schedule);
+      if (getGistToken()) scheduleGistSave(schedule);
       renderLessons();
     });
 
@@ -359,6 +521,7 @@
     const [item] = arr.splice(fromIdx, 1);
     arr.splice(toIdx, 0, item);
     saveSchedule(schedule);
+    if (getGistToken()) scheduleGistSave(schedule);
     renderLessons();
   }
 
@@ -413,16 +576,19 @@
       color: "",
     });
     saveSchedule(schedule);
+    if (getGistToken()) scheduleGistSave(schedule);
     renderLessons();
   }
 
   function resetSchedule() {
     if (!confirm("Ти точно хочеш видалити весь розклад?")) return;
-    localStorage.removeItem(STORAGE_KEY);
+    const empty = JSON.parse(JSON.stringify(defaultSchedule));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(empty));
     if (daySelect) daySelect.value = "";
     if (lessonsArea) lessonsArea.innerHTML = "";
-    showEmptyState(true, false);
+    showEmptyState(true, false, false);
     if (lessonFilter) lessonFilter.value = "";
+    if (getGistToken()) scheduleGistSave(empty);
   }
 
   function exportSchedule() {
@@ -447,6 +613,7 @@
           return;
         }
         saveSchedule(valid);
+        if (getGistToken()) scheduleGistSave(valid);
         loadLessons();
         alert("Розклад успішно імпортовано.");
       } catch (_) {
@@ -487,6 +654,21 @@
     });
   }
 
+  function updateSyncUI() {
+    const token = getGistToken();
+    const connectBtn = $("gistConnectBtn");
+    const disconnectBtn = $("gistDisconnectBtn");
+    const tokenInput = $("gistToken");
+    if (disconnectBtn) disconnectBtn.style.display = token ? "inline-block" : "none";
+    if (connectBtn) connectBtn.style.display = token ? "none" : "inline-block";
+    if (tokenInput) {
+      tokenInput.style.display = token ? "none" : "block";
+      if (!token) tokenInput.value = "";
+    }
+    if (token) setSyncStatus("Підключено. Розклад синхронізується з GitHub Gist.");
+    else setSyncStatus("");
+  }
+
   function init() {
     initTheme();
     markCurrentDay();
@@ -512,7 +694,48 @@
     if (themeBtn) themeBtn.addEventListener("click", toggleTheme);
     if (lessonFilter) lessonFilter.addEventListener("input", renderLessons);
 
-    loadLessons();
+    const syncToggle = $("syncToggle");
+    const syncPanel = $("syncPanel");
+    if (syncToggle && syncPanel) {
+      syncToggle.addEventListener("click", function () {
+        const open = !syncPanel.hidden;
+        syncPanel.hidden = open;
+        syncToggle.setAttribute("aria-expanded", open ? "false" : "true");
+      });
+    }
+    const gistConnectBtn = $("gistConnectBtn");
+    if (gistConnectBtn) {
+      gistConnectBtn.addEventListener("click", async function () {
+        const tokenInput = $("gistToken");
+        const token = tokenInput ? tokenInput.value.trim() : "";
+        if (!token) {
+          setSyncStatus("Вставте токен з GitHub.", true);
+          return;
+        }
+        setGistToken(token);
+        setSyncStatus("Перевірка та завантаження…");
+        await loadFromGist();
+        updateSyncUI();
+        loadLessons();
+      });
+    }
+    const gistDisconnectBtn = $("gistDisconnectBtn");
+    if (gistDisconnectBtn) {
+      gistDisconnectBtn.addEventListener("click", function () {
+        clearGistToken();
+        updateSyncUI();
+        setSyncStatus("Відключено. Розклад зберігається лише на цьому пристрої.");
+      });
+    }
+
+    updateSyncUI();
+    if (getGistToken()) {
+      loadFromGist().then(function () {
+        loadLessons();
+      });
+    } else {
+      loadLessons();
+    }
   }
 
   if (document.readyState === "loading") {

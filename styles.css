@@ -158,6 +158,89 @@ body {
   margin-bottom: 1rem;
 }
 
+/* Синхронізація (GitHub Gist) */
+.sync-section {
+  margin-bottom: 1.5rem;
+  text-align: left;
+}
+
+.sync-heading {
+  margin: 0 0 0.5rem 0;
+  font-size: 1rem;
+}
+
+.sync-toggle {
+  background: none;
+  border: none;
+  padding: 0.5rem 0;
+  font-size: 1rem;
+  color: var(--accent-light);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.sync-toggle:hover {
+  color: var(--accent);
+}
+
+.sync-panel {
+  padding: 1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px var(--shadow);
+}
+
+.sync-description,
+.sync-help {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.sync-help a {
+  color: var(--accent-light);
+}
+
+.sync-form {
+  margin-bottom: 0.75rem;
+}
+
+.sync-input {
+  width: 100%;
+  max-width: 320px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.95rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+
+.sync-input:focus {
+  outline: 2px solid var(--accent-light);
+  outline-offset: 1px;
+}
+
+.sync-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.sync-status {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.sync-status.sync-status-error {
+  color: var(--danger);
+}
+
 .btn {
   padding: 0.6rem 1rem;
   font-size: 0.95rem;
