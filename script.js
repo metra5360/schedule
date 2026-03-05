@@ -654,19 +654,122 @@
     });
   }
 
+  function isLikelyGistToken(str) {
+    if (!str || typeof str !== "string") return false;
+    const t = str.trim();
+    return t.length > 20 && (t.startsWith("ghp_") || t.startsWith("gho_") || t.startsWith("github_pat_"));
+  }
+
   function updateSyncUI() {
     const token = getGistToken();
     const connectBtn = $("gistConnectBtn");
     const disconnectBtn = $("gistDisconnectBtn");
+    const scanBtn = $("gistScanBtn");
     const tokenInput = $("gistToken");
+    const qrcodeBlock = $("qrcodeBlock");
+    const qrcodeContainer = $("qrcodeContainer");
     if (disconnectBtn) disconnectBtn.style.display = token ? "inline-block" : "none";
     if (connectBtn) connectBtn.style.display = token ? "none" : "inline-block";
+    if (scanBtn) scanBtn.style.display = "inline-block";
     if (tokenInput) {
       tokenInput.style.display = token ? "none" : "block";
       if (!token) tokenInput.value = "";
     }
+    if (qrcodeBlock) qrcodeBlock.hidden = !token;
+    if (token && qrcodeContainer && typeof window.QRCode === "function") {
+      qrcodeContainer.innerHTML = "";
+      try {
+        new window.QRCode(qrcodeContainer, { text: token, width: 160, height: 160 });
+      } catch (_) {
+        qrcodeContainer.textContent = "";
+      }
+    }
     if (token) setSyncStatus("Підключено. Розклад синхронізується з GitHub Gist.");
     else setSyncStatus("");
+  }
+
+  let scanStream = null;
+  let scanAnimationId = null;
+
+  function stopScan() {
+    if (scanStream) {
+      scanStream.getTracks().forEach(function (t) { t.stop(); });
+      scanStream = null;
+    }
+    if (scanAnimationId) {
+      cancelAnimationFrame(scanAnimationId);
+      scanAnimationId = null;
+    }
+    const video = $("scanVideo");
+    const modal = $("scanModal");
+    if (video) video.srcObject = null;
+    if (modal) modal.hidden = true;
+  }
+
+  function tryDecodeFromCanvas(canvas, callback) {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const w = canvas.width;
+    const h = canvas.height;
+    const imageData = ctx.getImageData(0, 0, w, h);
+    if (typeof window.jsQR === "function") {
+      const result = window.jsQR(imageData.data, w, h);
+      if (result && result.data) callback(result.data);
+    }
+  }
+
+  function applyScannedToken(data) {
+    const token = (data || "").trim();
+    if (!isLikelyGistToken(token)) return false;
+    setGistToken(token);
+    stopScan();
+    updateSyncUI();
+    setSyncStatus("Перевірка та завантаження…");
+    loadFromGist().then(function () {
+      loadLessons();
+    });
+    return true;
+  }
+
+  function startScanModal() {
+    const modal = $("scanModal");
+    const video = $("scanVideo");
+    const canvas = $("scanCanvas");
+    if (!modal || !video || !canvas) return;
+    modal.hidden = false;
+    const ctx = canvas.getContext("2d");
+    function tick() {
+      if (!video.srcObject || video.readyState !== video.HAVE_ENOUGH_DATA) {
+        scanAnimationId = requestAnimationFrame(tick);
+        return;
+      }
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+      tryDecodeFromCanvas(canvas, function (data) {
+        if (applyScannedToken(data)) return;
+      });
+      scanAnimationId = requestAnimationFrame(tick);
+    }
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+      .then(function (stream) {
+        scanStream = stream;
+        video.srcObject = stream;
+        video.play();
+        tick();
+      })
+      .catch(function () {
+        navigator.mediaDevices.getUserMedia({ video: true })
+          .then(function (stream) {
+            scanStream = stream;
+            video.srcObject = stream;
+            video.play();
+            tick();
+          })
+          .catch(function () {
+            setSyncStatus("Немає доступу до камери. Спробуй «Завантажити фото QR».", true);
+          });
+      });
   }
 
   function init() {
@@ -725,6 +828,38 @@
         clearGistToken();
         updateSyncUI();
         setSyncStatus("Відключено. Розклад зберігається лише на цьому пристрої.");
+      });
+    }
+    const gistScanBtn = $("gistScanBtn");
+    if (gistScanBtn) {
+      gistScanBtn.addEventListener("click", startScanModal);
+    }
+    const scanModalClose = $("scanModalClose");
+    if (scanModalClose) {
+      scanModalClose.addEventListener("click", stopScan);
+    }
+    const scanFileInput = $("scanFileInput");
+    if (scanFileInput) {
+      scanFileInput.addEventListener("change", function () {
+        const file = scanFileInput.files && scanFileInput.files[0];
+        if (!file) return;
+        const img = new Image();
+        const canvas = $("scanCanvas");
+        if (!canvas) return;
+        img.onload = function () {
+          const ctx = canvas.getContext("2d");
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+          tryDecodeFromCanvas(canvas, function (data) {
+            if (applyScannedToken(data)) scanFileInput.value = "";
+          });
+          URL.revokeObjectURL(img.src);
+        };
+        img.onerror = function () {
+          setSyncStatus("Не вдалося відкрити зображення.", true);
+        };
+        img.src = URL.createObjectURL(file);
       });
     }
 
