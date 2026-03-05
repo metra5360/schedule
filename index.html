@@ -75,14 +75,15 @@
       </div>
     </section>
 
-    <div id="scanModal" class="scan-modal" hidden role="dialog" aria-modal="true" aria-labelledby="scanModalTitle">
-      <div class="scan-modal-inner">
+    <div id="scanModal" class="scan-modal" hidden role="dialog" aria-modal="true" aria-labelledby="scanModalTitle" tabindex="-1">
+      <div class="scan-modal-inner" id="scanModalInner">
         <h2 id="scanModalTitle" class="scan-modal-title">Сканувати QR-код</h2>
         <p class="scan-modal-hint">Наведи камеру на QR-код з іншого пристрою або завантаж фото.</p>
         <div class="scan-video-wrap">
-          <video id="scanVideo" class="scan-video" playsinline muted></video>
+          <video id="scanVideo" class="scan-video" playsinline muted autoplay></video>
           <canvas id="scanCanvas" class="visually-hidden"></canvas>
         </div>
+        <p id="scanCameraError" class="scan-camera-error" hidden></p>
         <label class="scan-upload-label">
           <span class="btn btn-secondary">Завантажити фото QR</span>
           <input type="file" id="scanFileInput" accept="image/*" class="visually-hidden">

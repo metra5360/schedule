@@ -706,7 +706,15 @@
     }
     const video = $("scanVideo");
     const modal = $("scanModal");
-    if (video) video.srcObject = null;
+    const errEl = $("scanCameraError");
+    if (video) {
+      video.srcObject = null;
+      video.pause();
+    }
+    if (errEl) {
+      errEl.hidden = true;
+      errEl.textContent = "";
+    }
     if (modal) modal.hidden = true;
   }
 
@@ -735,15 +743,29 @@
     return true;
   }
 
+  function showCameraError(msg) {
+    const errEl = $("scanCameraError");
+    if (errEl) {
+      errEl.textContent = msg;
+      errEl.hidden = false;
+    }
+  }
+
   function startScanModal() {
     const modal = $("scanModal");
     const video = $("scanVideo");
     const canvas = $("scanCanvas");
+    const errEl = $("scanCameraError");
     if (!modal || !video || !canvas) return;
+    if (errEl) {
+      errEl.hidden = true;
+      errEl.textContent = "";
+    }
     modal.hidden = false;
+    modal.focus();
     const ctx = canvas.getContext("2d");
     function tick() {
-      if (!video.srcObject || video.readyState !== video.HAVE_ENOUGH_DATA) {
+      if (!video.srcObject || video.readyState !== video.HAVE_ENOUGH_DATA || video.videoWidth === 0) {
         scanAnimationId = requestAnimationFrame(tick);
         return;
       }
@@ -755,23 +777,27 @@
       });
       scanAnimationId = requestAnimationFrame(tick);
     }
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-      .then(function (stream) {
-        scanStream = stream;
-        video.srcObject = stream;
-        video.play();
-        tick();
-      })
-      .catch(function () {
-        navigator.mediaDevices.getUserMedia({ video: true })
-          .then(function (stream) {
-            scanStream = stream;
-            video.srcObject = stream;
-            video.play();
-            tick();
-          })
+    function startTick() {
+      tick();
+    }
+    function onStream(stream) {
+      scanStream = stream;
+      video.srcObject = stream;
+      video.play().then(startTick).catch(function () {
+        startTick();
+      });
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showCameraError("Камера не підтримується в цьому браузері. Використай «Завантажити фото QR».");
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(onStream)
+      .catch(function (e) {
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+          .then(onStream)
           .catch(function () {
-            setSyncStatus("Немає доступу до камери. Спробуй «Завантажити фото QR».", true);
+            showCameraError("Немає доступу до камери. Дозволь доступ у налаштуваннях браузера або натисни «Завантажити фото QR».");
           });
       });
   }
@@ -842,6 +868,16 @@
     if (scanModalClose) {
       scanModalClose.addEventListener("click", stopScan);
     }
+    const scanModal = $("scanModal");
+    const scanModalInner = $("scanModalInner");
+    if (scanModal) {
+      scanModal.addEventListener("click", function (e) {
+        if (e.target === scanModal) stopScan();
+      });
+    }
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && scanModal && !scanModal.hidden) stopScan();
+    });
     const scanFileInput = $("scanFileInput");
     if (scanFileInput) {
       scanFileInput.addEventListener("change", function () {

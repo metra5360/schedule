@@ -317,6 +317,15 @@ body {
   color: var(--text-secondary);
 }
 
+.scan-camera-error {
+  margin: 0 0 0.75rem 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  color: var(--danger);
+  background: rgba(220, 38, 38, 0.1);
+  border-radius: 8px;
+}
+
 .scan-video-wrap {
   position: relative;
   width: 100%;
