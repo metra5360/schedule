@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Мій розклад уроків</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>📚 Мій розклад уроків</h1>
+    <div class="header-actions">
+      <button type="button" id="themeToggle" class="icon-btn" aria-label="Перемкнути тему (світла/темна)">
+        <span aria-hidden="true">🌓</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <section class="day-select-section" aria-labelledby="day-select-label">
+      <label id="day-select-label" for="daySelect">Обери день тижня:</label>
+      <select id="daySelect" aria-label="Вибір дня тижня">
+        <option value="">-- Вибери день --</option>
+        <option value="Понеділок">Понеділок</option>
+        <option value="Вівторок">Вівторок</option>
+        <option value="Середа">Середа</option>
+        <option value="Четвер">Четвер</option>
+        <option value="П'ятниця">П'ятниця</option>
+        <option value="Субота">Субота</option>
+        <option value="Неділя">Неділя</option>
+      </select>
+    </section>
+
+    <section class="controls-section">
+      <button type="button" id="addLessonBtn" class="btn btn-primary">➕ Додати урок</button>
+      <button type="button" id="resetBtn" class="btn btn-danger">♻️ Скинути все</button>
+      <button type="button" id="exportBtn" class="btn btn-secondary">📤 Експорт</button>
+      <button type="button" id="importBtn" class="btn btn-secondary">📥 Імпорт</button>
+      <input type="file" id="importFile" accept=".json" class="visually-hidden" aria-hidden="true">
+    </section>
+
+    <section class="filter-section" aria-labelledby="filter-label">
+      <label id="filter-label" for="lessonFilter" class="visually-hidden">Пошук уроків</label>
+      <input type="search" id="lessonFilter" placeholder="Пошук за назвою уроку..." class="filter-input" aria-label="Пошук за назвою уроку">
+    </section>
+
+    <section class="lessons-section" aria-labelledby="lessons-heading">
+      <h2 id="lessons-heading" class="visually-hidden">Список уроків</h2>
+      <div id="lessonsArea" class="lessons-container"></div>
+      <p id="emptyState" class="empty-state" hidden>
+        <span id="emptyStateText">Обери день тижня і натисни «Додати урок», щоб почати.</span>
+      </p>
+      <p id="noResultsState" class="empty-state" hidden>
+        За цим пошуком уроків не знайдено.
+      </p>
+    </section>
+  </main>
+
+  <script src="script.js" defer></script>
+</body>
+</html>
