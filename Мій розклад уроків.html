@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Мій розклад уроків</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: linear-gradient(to right, #dbeafe, #f0f9ff);
+      text-align: center;
+      padding: 20px;
+    }
+
+    h1 {
+      color: #1e3a8a;
+      margin-bottom: 10px;
+    }
+
+    select {
+      padding: 12px;
+      font-size: 16px;
+      border-radius: 10px;
+      border: 1px solid #aaa;
+      width: 260px;
+      margin-bottom: 15px;
+    }
+
+    button {
+      padding: 10px 15px;
+      font-size: 15px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      margin: 5px;
+      transition: 0.2s;
+    }
+
+    button:hover {
+      transform: scale(1.05);
+    }
+
+    .addBtn {
+      background: #22c55e;
+      color: white;
+    }
+
+    .resetBtn {
+      background: #ef4444;
+      color: white;
+    }
+
+    .lesson-block {
+      background: white;
+      padding: 15px;
+      margin: 15px auto;
+      border-radius: 15px;
+      width: 420px;
+      text-align: left;
+      box-shadow: 0px 4px 12px rgba(0,0,0,0.15);
+      position: relative;
+    }
+
+    input {
+      padding: 8px;
+      width: 95%;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      margin-top: 5px;
+      font-size: 14px;
+    }
+
+    a {
+      color: #2563eb;
+      font-weight: bold;
+      text-decoration: none;
+    }
+
+    .deleteBtn {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: #dc2626;
+      color: white;
+      border-radius: 8px;
+      padding: 5px 10px;
+      font-size: 13px;
+    }
+  </style>
+</head>
+
+<body>
+
+<h1>📚 Мій розклад уроків</h1>
+<p>Обери день тижня:</p>
+
+<select id="daySelect" onchange="loadLessons()">
+  <option value="">-- Вибери день --</option>
+  <option value="Понеділок">Понеділок</option>
+  <option value="Вівторок">Вівторок</option>
+  <option value="Середа">Середа</option>
+  <option value="Четвер">Четвер</option>
+  <option value="П'ятниця">П'ятниця</option>
+  <option value="Субота">Субота</option>
+  <option value="Неділя">Неділя</option>
+</select>
+
+<br>
+
+<button type="button" class="addBtn" onclick="addLesson()">➕ Додати урок</button>
+<button type="button" class="resetBtn" onclick="resetSchedule()">♻️ Скинути все</button>
+
+<div id="lessonsArea"></div>
+
+<script>
+  function escapeHtml(text) {
+    if (text == null) return "";
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  function safeHref(url) {
+    if (!url || typeof url !== "string") return "#";
+    const t = url.trim();
+    if (t.startsWith("http://") || t.startsWith("https://")) return t;
+    return "#";
+  }
+
+  const defaultSchedule = {
+    "Понеділок": [],
+    "Вівторок": [],
+    "Середа": [],
+    "Четвер": [],
+    "П'ятниця": [],
+    "Субота": [],
+    "Неділя": []
+  };
+
+  function getSchedule() {
+    let saved = localStorage.getItem("scheduleData");
+    if (!saved) {
+      localStorage.setItem("scheduleData", JSON.stringify(defaultSchedule));
+      return defaultSchedule;
+    }
+    try {
+      return JSON.parse(saved);
+    } catch (e) {
+      localStorage.setItem("scheduleData", JSON.stringify(defaultSchedule));
+      return defaultSchedule;
+    }
+  }
+
+  function saveSchedule(data) {
+    localStorage.setItem("scheduleData", JSON.stringify(data));
+  }
+
+  function loadLessons() {
+    const day = document.getElementById("daySelect").value;
+    const lessonsArea = document.getElementById("lessonsArea");
+    lessonsArea.innerHTML = "";
+
+    if (!day) return;
+
+    let schedule = getSchedule();
+    let lessons = schedule[day] || [];
+
+    lessons.forEach((lesson, index) => {
+      let block = document.createElement("div");
+      block.className = "lesson-block";
+      block.dataset.day = day;
+      block.dataset.index = String(index);
+
+      const safeName = escapeHtml(lesson.name);
+      const safeLink = escapeHtml(lesson.link);
+      const linkUrl = safeHref(lesson.link);
+      const hasLink = (lesson.link || "").trim() !== "";
+
+      block.innerHTML = `
+        <button class="deleteBtn" type="button" onclick="deleteLesson(this.closest('.lesson-block').dataset.day, Number(this.closest('.lesson-block').dataset.index))">❌</button>
+
+        <h3>Урок ${index + 1}</h3>
+
+        <label>📘 Назва:</label>
+        <input type="text"
+          value="${safeName}"
+          placeholder="Назва уроку..."
+          oninput="updateLesson(this.closest('.lesson-block').dataset.day, Number(this.closest('.lesson-block').dataset.index), 'name', this.value)"
+        >
+
+        <label>🔗 Посилання:</label>
+        <input type="text"
+          value="${safeLink}"
+          placeholder="Zoom або Meet..."
+          oninput="updateLesson(this.closest('.lesson-block').dataset.day, Number(this.closest('.lesson-block').dataset.index), 'link', this.value)"
+        >
+
+        ${hasLink
+          ? `<p>🎥 <a href="${linkUrl}" target="_blank" rel="noopener noreferrer">Перейти на урок</a></p>`
+          : `<p style="color:gray;">Посилання ще не додано</p>`
+        }
+      `;
+
+      lessonsArea.appendChild(block);
+    });
+  }
+
+  function updateLesson(day, index, field, value) {
+    let schedule = getSchedule();
+    schedule[day][index][field] = value;
+    saveSchedule(schedule);
+  }
+
+  function addLesson() {
+    const day = document.getElementById("daySelect").value;
+    if (!day) {
+      alert("Спочатку вибери день!");
+      return;
+    }
+
+    let schedule = getSchedule();
+
+    schedule[day].push({
+      name: "",
+      link: ""
+    });
+
+    saveSchedule(schedule);
+    loadLessons();
+  }
+
+  function deleteLesson(day, index) {
+    let schedule = getSchedule();
+    schedule[day].splice(index, 1);
+    saveSchedule(schedule);
+    loadLessons();
+  }
+
+  function resetSchedule() {
+    if (confirm("Ти точно хочеш видалити весь розклад?")) {
+      localStorage.removeItem("scheduleData");
+      document.getElementById("daySelect").value = "";
+      document.getElementById("lessonsArea").innerHTML = "";
+    }
+  }
+</script>
+
+
+</body></html>
