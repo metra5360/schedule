@@ -668,6 +668,10 @@
     const tokenInput = $("gistToken");
     const qrcodeBlock = $("qrcodeBlock");
     const qrcodeContainer = $("qrcodeContainer");
+    const stateNotConnected = $("syncStateNotConnected");
+    const stateConnected = $("syncStateConnected");
+    if (stateNotConnected) stateNotConnected.hidden = !!token;
+    if (stateConnected) stateConnected.hidden = !token;
     if (disconnectBtn) disconnectBtn.style.display = token ? "inline-block" : "none";
     if (connectBtn) connectBtn.style.display = token ? "none" : "inline-block";
     if (scanBtn) scanBtn.style.display = "inline-block";

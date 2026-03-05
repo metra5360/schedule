@@ -200,6 +200,17 @@ body {
   line-height: 1.4;
 }
 
+.sync-state-hint {
+  margin: 0 0 0.75rem 0;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: var(--text-primary);
+  background: var(--border);
+  border-radius: 8px;
+  border-left: 3px solid var(--accent-light);
+}
+
 .sync-help a {
   color: var(--accent-light);
 }

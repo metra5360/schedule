@@ -47,22 +47,28 @@
       </h2>
       <div id="syncPanel" class="sync-panel" hidden>
         <p class="sync-description">
-          Щоб відкривати розклад з телефону чи іншого комп’ютера, збережи його в хмарі. На цьому пристрої один раз створи токен на GitHub і підключись; на інших — відскануй QR-код або встав токен.
+          Розклад зберігається в хмарі (GitHub Gist). Усі пристрої з одним і тим самим токеном бачать один розклад.
         </p>
+        <div id="syncStateNotConnected" class="sync-state-hint">
+          <strong>Цей пристрій ще не підключено.</strong> Встав токен (створи його на GitHub один раз) або відскануй QR-код з пристрою, де вже відкритий розклад.
+        </div>
+        <div id="syncStateConnected" class="sync-state-hint" hidden>
+          <strong>Цей пристрій підключено.</strong> Нижче — QR-код для інших пристроїв. Покажи його на екрані телефону/планшета і відскануй там.
+        </div>
         <p class="sync-help">
-          <a href="https://github.com/settings/tokens/new?description=Schedule%20sync&scopes=gist" target="_blank" rel="noopener noreferrer">Створити токен на GitHub</a> — постав галочку <strong>gist</strong>, збережи токен і встав нижче або покажи QR на іншому пристрої.
+          <a href="https://github.com/settings/tokens/new?description=Schedule%20sync&scopes=gist" target="_blank" rel="noopener noreferrer">Створити токен на GitHub</a> — постав галочку <strong>gist</strong>, скопіюй токен і встав нижче.
         </p>
         <div class="sync-form">
           <label for="gistToken" class="visually-hidden">GitHub токен (Personal Access Token)</label>
           <input type="password" id="gistToken" placeholder="ghp_xxxx..." class="sync-input" autocomplete="off">
           <div class="sync-buttons">
-            <button type="button" id="gistConnectBtn" class="btn btn-primary">Підключити</button>
-            <button type="button" id="gistScanBtn" class="btn btn-secondary">📷 Сканувати QR-код</button>
+            <button type="button" id="gistConnectBtn" class="btn btn-primary">Підключити за токеном</button>
+            <button type="button" id="gistScanBtn" class="btn btn-secondary">📷 Сканувати QR з іншого пристрою</button>
             <button type="button" id="gistDisconnectBtn" class="btn btn-secondary" style="display:none;">Відключити</button>
           </div>
         </div>
         <div id="qrcodeBlock" class="qrcode-block" hidden>
-          <p class="qrcode-label">Підключити інший пристрій — покажи цей QR-код на екрані того пристрою та відскануй:</p>
+          <p class="qrcode-label">Покажи цей QR на екрані того пристрою і натисни там «Сканувати QR»:</p>
           <div id="qrcodeContainer" class="qrcode-container" aria-hidden="true"></div>
         </div>
         <p id="syncStatus" class="sync-status" role="status" aria-live="polite"></p>
