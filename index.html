@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Мій розклад уроків</title>
   <link rel="stylesheet" href="styles.css">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
   <header class="app-header">
@@ -42,55 +43,21 @@
     <section class="sync-section" aria-labelledby="sync-heading">
       <h2 id="sync-heading" class="sync-heading">
         <button type="button" id="syncToggle" class="sync-toggle" aria-expanded="false" aria-controls="syncPanel">
-          🔄 Синхронізація з будь-якого пристрою (GitHub Gist)
+          🔄 Синхронізація (Google Drive)
         </button>
       </h2>
       <div id="syncPanel" class="sync-panel" hidden>
         <p class="sync-description">
-          Розклад зберігається в хмарі (GitHub Gist). Усі пристрої з одним і тим самим токеном бачать один розклад.
+          Увійди через Google — розклад зберігатиметься в твоєму Drive (прихована папка додатку) і буде однаковий на всіх пристроях.
         </p>
-        <div id="syncStateNotConnected" class="sync-state-hint">
-          <strong>Цей пристрій ще не підключено.</strong> Встав токен (створи його на GitHub один раз) або відскануй QR-код з пристрою, де вже відкритий розклад.
-        </div>
-        <div id="syncStateConnected" class="sync-state-hint" hidden>
-          <strong>Цей пристрій підключено.</strong> Нижче — QR-код для інших пристроїв. Покажи його на екрані телефону/планшета і відскануй там.
-        </div>
-        <p class="sync-help">
-          <a href="https://github.com/settings/tokens/new?description=Schedule%20sync&scopes=gist" target="_blank" rel="noopener noreferrer">Створити токен на GitHub</a> — постав галочку <strong>gist</strong>, скопіюй токен і встав нижче.
-        </p>
-        <div class="sync-form">
-          <label for="gistToken" class="visually-hidden">GitHub токен (Personal Access Token)</label>
-          <input type="password" id="gistToken" placeholder="ghp_xxxx..." class="sync-input" autocomplete="off">
-          <div class="sync-buttons">
-            <button type="button" id="gistConnectBtn" class="btn btn-primary">Підключити за токеном</button>
-            <button type="button" id="gistScanBtn" class="btn btn-secondary">📷 Сканувати QR з іншого пристрою</button>
-            <button type="button" id="gistDisconnectBtn" class="btn btn-secondary" style="display:none;">Відключити</button>
-          </div>
-        </div>
-        <div id="qrcodeBlock" class="qrcode-block" hidden>
-          <p class="qrcode-label">Покажи цей QR на екрані того пристрою і натисни там «Сканувати QR»:</p>
-          <div id="qrcodeContainer" class="qrcode-container" aria-hidden="true"></div>
+        <div class="sync-buttons">
+          <button type="button" id="googleSignInBtn" class="btn btn-primary">Увійти через Google</button>
+          <button type="button" id="googleSignOutBtn" class="btn btn-secondary" style="display:none;">Вийти</button>
         </div>
         <p id="syncStatus" class="sync-status" role="status" aria-live="polite"></p>
+        <div id="syncError" class="sync-error" role="alert" hidden></div>
       </div>
     </section>
-
-    <div id="scanModal" class="scan-modal" hidden role="dialog" aria-modal="true" aria-labelledby="scanModalTitle" tabindex="-1">
-      <div class="scan-modal-inner" id="scanModalInner">
-        <h2 id="scanModalTitle" class="scan-modal-title">Сканувати QR-код</h2>
-        <p class="scan-modal-hint">Наведи камеру на QR-код з іншого пристрою або завантаж фото.</p>
-        <div class="scan-video-wrap">
-          <video id="scanVideo" class="scan-video" playsinline muted autoplay></video>
-          <canvas id="scanCanvas" class="visually-hidden"></canvas>
-        </div>
-        <p id="scanCameraError" class="scan-camera-error" hidden></p>
-        <label class="scan-upload-label">
-          <span class="btn btn-secondary">Завантажити фото QR</span>
-          <input type="file" id="scanFileInput" accept="image/*" class="visually-hidden">
-        </label>
-        <button type="button" id="scanModalClose" class="btn btn-secondary">Закрити</button>
-      </div>
-    </div>
 
     <section class="filter-section" aria-labelledby="filter-label">
       <label id="filter-label" for="lessonFilter" class="visually-hidden">Пошук уроків</label>
@@ -109,8 +76,6 @@
     </section>
   </main>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
   <script src="script.js" defer></script>
 </body>
 </html>

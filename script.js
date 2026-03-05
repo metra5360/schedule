@@ -1,7 +1,7 @@
 /**
  * Мій розклад уроків — головний скрипт
- * Інкапсульовано в IIFE для уникнення забруднення глобальної області.
- * Безпека: без innerHTML для користувацького вводу, екранування та валідація посилань.
+ * Синхронізація через Google Sign-In + Google Drive appDataFolder.
+ * Без innerHTML для користувацького вводу.
  */
 (function () {
   "use strict";
@@ -18,43 +18,48 @@
 
   const STORAGE_KEY = "scheduleData";
   const DEBOUNCE_MS = 400;
-  const GIST_STORAGE_TOKEN = "scheduleGistToken";
-  const GIST_STORAGE_ID = "scheduleGistId";
-  const GIST_FILENAME = "schedule.json";
-  const GIST_API = "https://api.github.com/gists";
-  const GIST_DEBOUNCE_MS = 2000;
+  const DRIVE_DEBOUNCE_MS = 2500;
+  const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
+  const DRIVE_API = "https://www.googleapis.com/drive/v3";
+  const DRIVE_UPLOAD = "https://www.googleapis.com/upload/drive/v3";
+  const SCHEDULE_FILENAME = "schedule.json";
+  const TOKEN_STORAGE_KEY = "scheduleGoogleToken";
+  const TOKEN_EXPIRY_KEY = "scheduleGoogleTokenExpiry";
+  const FILE_ID_STORAGE_KEY = "scheduleDriveFileId";
+  const TOKEN_VALID_MS = 55 * 60 * 1000;
 
-  const defaultSchedule = Object.fromEntries(DAYS.map((d) => [d, []]));
+  /** Google OAuth Client ID (можна перевизначити через window.GOOGLE_CLIENT_ID) */
+  const GOOGLE_CLIENT_ID =
+    typeof window.GOOGLE_CLIENT_ID !== "undefined"
+      ? window.GOOGLE_CLIENT_ID
+      : "198659847533-hlldfhhg99rksn642rv8jtnu0186og3v.apps.googleusercontent.com";
 
-  /** Повертає індекс поточного дня (0 = понеділок, 6 = неділя) */
+  const defaultSchedule = Object.fromEntries(DAYS.map(function (d) { return [d, []]; }));
+
   function getCurrentDayIndex() {
-    const d = new Date().getDay();
+    var d = new Date().getDay();
     return d === 0 ? 6 : d - 1;
   }
 
-  /** Перевіряє, чи URL безпечний (тільки http/https) */
   function isAllowedUrl(url) {
     if (!url || typeof url !== "string") return false;
-    const t = url.trim();
-    return t.startsWith("http://") || t.startsWith("https://");
+    var t = url.trim();
+    return t.indexOf("http://") === 0 || t.indexOf("https://") === 0;
   }
 
-  /** Повертає безпечний href або "#" */
   function safeHref(url) {
     return isAllowedUrl(url) ? url.trim() : "#";
   }
 
-  /** Екранує HTML для безпеки від XSS */
   function escapeHtml(text) {
     if (text == null) return "";
-    const div = document.createElement("div");
+    var div = document.createElement("div");
     div.textContent = String(text);
     return div.innerHTML;
   }
 
-  /** Валідує та нормалізує один урок */
   function normalizeLesson(raw) {
-    const o = raw && typeof raw === "object" ? raw : {};
+    var o = raw && typeof raw === "object" ? raw : {};
     return {
       name: typeof o.name === "string" ? o.name : "",
       link: typeof o.link === "string" ? o.link : "",
@@ -64,12 +69,12 @@
     };
   }
 
-  /** Валідує структуру збережених даних */
   function validateSchedule(data) {
     if (!data || typeof data !== "object") return null;
-    const out = {};
-    for (const day of DAYS) {
-      const arr = Array.isArray(data[day]) ? data[day] : [];
+    var out = {};
+    for (var i = 0; i < DAYS.length; i++) {
+      var day = DAYS[i];
+      var arr = Array.isArray(data[day]) ? data[day] : [];
       out[day] = arr.map(normalizeLesson);
     }
     return out;
@@ -77,10 +82,18 @@
 
   function getSchedule() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return JSON.parse(JSON.stringify(defaultSchedule));
-      const parsed = JSON.parse(raw);
-      return validateSchedule(parsed) || JSON.parse(JSON.stringify(defaultSchedule));
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultSchedule));
+        return JSON.parse(JSON.stringify(defaultSchedule));
+      }
+      var parsed = JSON.parse(raw);
+      var valid = validateSchedule(parsed);
+      if (!valid) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultSchedule));
+        return JSON.parse(JSON.stringify(defaultSchedule));
+      }
+      return valid;
     } catch (_) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultSchedule));
       return JSON.parse(JSON.stringify(defaultSchedule));
@@ -88,188 +101,297 @@
   }
 
   function saveSchedule(data) {
-    const valid = validateSchedule(data);
+    var valid = validateSchedule(data);
     if (valid) localStorage.setItem(STORAGE_KEY, JSON.stringify(valid));
   }
 
-  let saveDebounceTimer = null;
-  function debouncedSave(data) {
-    if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
-    saveDebounceTimer = setTimeout(function () {
-      saveSchedule(data);
-      if (getGistToken()) scheduleGistSave(data);
-      saveDebounceTimer = null;
-    }, DEBOUNCE_MS);
-  }
-
-  function getGistToken() {
+  function getGoogleToken() {
     try {
-      return localStorage.getItem(GIST_STORAGE_TOKEN) || "";
+      var token = localStorage.getItem(TOKEN_STORAGE_KEY) || "";
+      var expiry = parseInt(localStorage.getItem(TOKEN_EXPIRY_KEY) || "0", 10);
+      if (!token || Date.now() > expiry) return "";
+      return token;
     } catch (_) {
       return "";
     }
   }
-  function setGistToken(token) {
-    localStorage.setItem(GIST_STORAGE_TOKEN, (token || "").trim());
+
+  function setGoogleToken(token, expiresInSeconds) {
+    if (!token) {
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      localStorage.removeItem(TOKEN_EXPIRY_KEY);
+      return;
+    }
+    localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    var expiry = Date.now() + (expiresInSeconds || 3600) * 1000 - TOKEN_VALID_MS;
+    localStorage.setItem(TOKEN_EXPIRY_KEY, String(expiry));
   }
-  function clearGistToken() {
-    localStorage.removeItem(GIST_STORAGE_TOKEN);
-    localStorage.removeItem(GIST_STORAGE_ID);
+
+  function getDriveFileId() {
+    return localStorage.getItem(FILE_ID_STORAGE_KEY) || "";
   }
-  function getGistId() {
-    return localStorage.getItem(GIST_STORAGE_ID) || "";
+
+  function setDriveFileId(id) {
+    if (id) localStorage.setItem(FILE_ID_STORAGE_KEY, id);
+    else localStorage.removeItem(FILE_ID_STORAGE_KEY);
   }
-  function setGistId(id) {
-    if (id) localStorage.setItem(GIST_STORAGE_ID, id);
-    else localStorage.removeItem(GIST_STORAGE_ID);
+
+  function isGoogleConnected() {
+    return !!getGoogleToken();
   }
 
   function setSyncStatus(text, isError) {
-    const el = $("syncStatus");
+    var el = document.getElementById("syncStatus");
     if (!el) return;
     el.textContent = text || "";
     el.className = "sync-status" + (isError ? " sync-status-error" : "");
   }
 
-  let gistSaveTimer = null;
-  function scheduleGistSave(data) {
-    if (!getGistToken()) return;
-    if (gistSaveTimer) clearTimeout(gistSaveTimer);
-    gistSaveTimer = setTimeout(function () {
-      gistSaveTimer = null;
-      saveToGist(data);
-    }, GIST_DEBOUNCE_MS);
+  function setSyncError(text) {
+    var el = document.getElementById("syncError");
+    if (!el) return;
+    el.textContent = text || "";
+    el.hidden = !text;
   }
 
-  async function loadFromGist() {
-    const token = getGistToken();
-    if (!token) return null;
-    setSyncStatus("Завантаження з хмари…");
+  function clearDriveAuth() {
+    setGoogleToken("");
+    setDriveFileId("");
+    setSyncError("");
+  }
+
+  var tokenClient = null;
+
+  function initGoogleAuth() {
+    if (typeof window.google === "undefined" || !window.google.accounts || !window.google.accounts.oauth2) return;
     try {
-      const id = getGistId();
-      let content = null;
-      let gistId = id;
-      if (id) {
-        const res = await fetch(GIST_API + "/" + id, {
-          headers: { Authorization: "token " + token },
-        });
-        if (res.ok) {
-          const gist = await res.json();
-          const file = gist.files && gist.files[GIST_FILENAME];
-          if (file && file.content) content = file.content;
-        } else {
-          setGistId("");
-          gistId = "";
-        }
-      }
-      if (!gistId) {
-        const listRes = await fetch(GIST_API + "?per_page=100", {
-          headers: { Authorization: "token " + token },
-        });
-        if (!listRes.ok) throw new Error("Не вдалося отримати список Gist");
-        const list = await listRes.json();
-        const found = list.find(function (g) {
-          return g.files && g.files[GIST_FILENAME];
-        });
-        if (found) {
-          gistId = found.id;
-          setGistId(gistId);
-          const getRes = await fetch(GIST_API + "/" + gistId, {
-            headers: { Authorization: "token " + token },
-          });
-          if (getRes.ok) {
-            const full = await getRes.json();
-            const file = full.files && full.files[GIST_FILENAME];
-            if (file && file.content) content = file.content;
+      tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: DRIVE_SCOPE,
+        callback: function (resp) {
+          if (resp && resp.access_token) {
+            setGoogleToken(resp.access_token, resp.expires_in);
+            setSyncError("");
+            setSyncStatus("Підключено. Завантаження з Drive…");
+            driveEnsureFileAndLoad();
+          } else {
+            setSyncStatus("Вхід скасовано.", true);
           }
-        }
-      }
-      if (content) {
-        const parsed = JSON.parse(content);
-        const valid = validateSchedule(parsed);
-        if (valid) {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(valid));
-          setSyncStatus("Синхронізовано з хмарою.");
-          return valid;
-        }
-      }
-      if (!gistId) {
-        const created = await createGist(getSchedule());
-        if (created) setGistId(created);
-        setSyncStatus("Gist створено. Розклад збережено в хмарі.");
-      } else {
-        setSyncStatus("Підключено. Розклад у хмарі порожній або невалідний.");
-      }
-      return null;
-    } catch (e) {
-      setSyncStatus("Помилка: " + (e.message || "невідома"), true);
-      return null;
+        },
+      });
+    } catch (_) {}
+  }
+
+  function googleConnect() {
+    if (tokenClient) {
+      tokenClient.requestAccessToken();
+    } else {
+      setSyncError("Google Sign-In ще не завантажено. Оновіть сторінку.");
     }
   }
 
-  async function createGist(data) {
-    const token = getGistToken();
-    if (!token) return null;
-    const res = await fetch(GIST_API, {
+  function googleDisconnect() {
+    clearDriveAuth();
+    setSyncStatus("");
+    setSyncError("");
+    updateSyncUI();
+  }
+
+  function driveAuthHeader() {
+    var token = getGoogleToken();
+    return token ? { Authorization: "Bearer " + token } : {};
+  }
+
+  function driveFindScheduleFile() {
+    var token = getGoogleToken();
+    if (!token) return Promise.resolve(null);
+    var q = "name='" + SCHEDULE_FILENAME + "' and trashed=false";
+    var url = DRIVE_API + "/files?spaces=appDataFolder&q=" + encodeURIComponent(q) + "&fields=files(id,name,modifiedTime)";
+    return fetch(url, { headers: driveAuthHeader() })
+      .then(function (res) {
+        if (res.status === 401) {
+          clearDriveAuth();
+          setSyncError("Підключення втрачено. Увійдіть знову.");
+          updateSyncUI();
+          throw new Error("Unauthorized");
+        }
+        return res.json();
+      })
+      .then(function (data) {
+        var files = data.files && data.files.length ? data.files : [];
+        return files[0] || null;
+      });
+  }
+
+  function driveCreateScheduleFile(contentJsonString) {
+    var token = getGoogleToken();
+    if (!token) return Promise.resolve(null);
+    var boundary = "-------boundary_" + Date.now();
+    var meta = JSON.stringify({ name: SCHEDULE_FILENAME, parents: ["appDataFolder"] });
+    var body = "--" + boundary + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n" + meta + "\r\n--" + boundary + "\r\nContent-Type: application/json\r\n\r\n" + contentJsonString + "\r\n--" + boundary + "--";
+    var url = DRIVE_UPLOAD + "/files?uploadType=multipart";
+    return fetch(url, {
       method: "POST",
       headers: {
-        Authorization: "token " + token,
+        Authorization: "Bearer " + token,
+        "Content-Type": "multipart/related; boundary=" + boundary,
+      },
+      body: body,
+    })
+      .then(function (res) {
+        if (res.status === 401) {
+          clearDriveAuth();
+          setSyncError("Підключення втрачено. Увійдіть знову.");
+          updateSyncUI();
+          throw new Error("Unauthorized");
+        }
+        return res.json();
+      })
+      .then(function (file) {
+        return file.id || null;
+      });
+  }
+
+  function driveDownloadSchedule(fileId) {
+    var token = getGoogleToken();
+    if (!token || !fileId) return Promise.resolve(null);
+    var url = DRIVE_API + "/files/" + fileId + "?alt=media";
+    return fetch(url, { headers: driveAuthHeader() })
+      .then(function (res) {
+        if (res.status === 401) {
+          clearDriveAuth();
+          setSyncError("Підключення втрачено. Увійдіть знову.");
+          updateSyncUI();
+          throw new Error("Unauthorized");
+        }
+        return res.text();
+      });
+  }
+
+  function driveUpdateSchedule(fileId, contentJsonString) {
+    var token = getGoogleToken();
+    if (!token || !fileId) return Promise.resolve();
+    var url = DRIVE_UPLOAD + "/files/" + fileId + "?uploadType=media";
+    return fetch(url, {
+      method: "PATCH",
+      headers: {
+        Authorization: "Bearer " + token,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        description: "Мій розклад уроків",
-        public: false,
-        files: { [GIST_FILENAME]: { content: JSON.stringify(data, null, 2) } },
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(function () { return {}; });
-      throw new Error(err.message || "Не вдалося створити Gist");
-    }
-    const gist = await res.json();
-    return gist.id || null;
-  }
-
-  async function saveToGist(data) {
-    const token = getGistToken();
-    const id = getGistId();
-    if (!token || !id) return;
-    try {
-      const res = await fetch(GIST_API + "/" + id, {
-        method: "PATCH",
-        headers: {
-          Authorization: "token " + token,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          files: { [GIST_FILENAME]: { content: JSON.stringify(data, null, 2) } },
-        }),
+      body: contentJsonString,
+    })
+      .then(function (res) {
+        if (res.status === 401) {
+          clearDriveAuth();
+          setSyncError("Підключення втрачено. Увійдіть знову.");
+          updateSyncUI();
+          throw new Error("Unauthorized");
+        }
       });
-      if (!res.ok) {
-        const err = await res.json().catch(function () { return {}; });
-        throw new Error(err.message || "Не вдалося оновити Gist");
+  }
+
+  function driveEnsureFileAndLoad() {
+    var token = getGoogleToken();
+    if (!token) return Promise.resolve();
+    setSyncStatus("Завантаження з Drive…");
+    driveFindScheduleFile()
+      .then(function (file) {
+        if (file && file.id) {
+          setDriveFileId(file.id);
+          return driveDownloadSchedule(file.id);
+        }
+        return driveCreateScheduleFile(JSON.stringify(getSchedule(), null, 2)).then(function (newId) {
+          if (newId) {
+            setDriveFileId(newId);
+            setSyncStatus("Файл створено. Розклад синхронізується з Drive.");
+          }
+          return null;
+        });
+      })
+      .then(function (content) {
+        if (content) {
+          try {
+            var parsed = JSON.parse(content);
+            var valid = validateSchedule(parsed);
+            if (valid) {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(valid));
+              setSyncStatus("Синхронізовано з Drive.");
+              return valid;
+            }
+          } catch (_) {}
+          setSyncStatus("Підключено. Розклад синхронізується з Drive.");
+        }
+        return null;
+      })
+      .then(function () {
+        updateSyncUI();
+        if (typeof loadLessons === "function") loadLessons();
+      })
+      .catch(function (e) {
+        if (e.message !== "Unauthorized") {
+          setSyncError("Помилка Drive: " + (e.message || "невідома"));
+        }
+        setSyncStatus("", true);
+        updateSyncUI();
+      });
+  }
+
+  var driveSaveTimer = null;
+
+  function scheduleDriveSave(data) {
+    if (!isGoogleConnected()) return;
+    if (driveSaveTimer) clearTimeout(driveSaveTimer);
+    driveSaveTimer = setTimeout(function () {
+      driveSaveTimer = null;
+      var fileId = getDriveFileId();
+      if (!fileId) {
+        driveEnsureFileAndLoad();
+        return;
       }
-      setSyncStatus("Збережено в хмарі.");
-    } catch (e) {
-      setSyncStatus("Помилка збереження: " + (e.message || "невідома"), true);
+      var content = JSON.stringify(data, null, 2);
+      driveUpdateSchedule(fileId, content).then(function () {
+        setSyncStatus("Збережено в Drive.");
+      }).catch(function () {});
+    }, DRIVE_DEBOUNCE_MS);
+  }
+
+  var saveDebounceTimer = null;
+
+  function debouncedSave(data) {
+    if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = setTimeout(function () {
+      saveSchedule(data);
+      if (isGoogleConnected()) scheduleDriveSave(data);
+      saveDebounceTimer = null;
+    }, DEBOUNCE_MS);
+  }
+
+  function updateSyncUI() {
+    var connected = isGoogleConnected();
+    var signInBtn = document.getElementById("googleSignInBtn");
+    var signOutBtn = document.getElementById("googleSignOutBtn");
+    if (signInBtn) signInBtn.style.display = connected ? "none" : "inline-block";
+    if (signOutBtn) signOutBtn.style.display = connected ? "inline-block" : "none";
+    if (connected) {
+      if (!document.getElementById("syncStatus").textContent) setSyncStatus("Підключено. Розклад синхронізується з Drive.");
     }
   }
 
-  const $ = (id) => document.getElementById(id);
-  const daySelect = $("daySelect");
-  const lessonsArea = $("lessonsArea");
-  const emptyState = $("emptyState");
-  const noResultsState = $("noResultsState");
-  const lessonFilter = $("lessonFilter");
-  const importFile = $("importFile");
+  var $ = function (id) { return document.getElementById(id); };
+  var daySelect = $("daySelect");
+  var lessonsArea = $("lessonsArea");
+  var emptyState = $("emptyState");
+  var noResultsState = $("noResultsState");
+  var lessonFilter = $("lessonFilter");
+  var importFile = $("importFile");
 
   function getFilterText() {
     return (lessonFilter && lessonFilter.value) ? lessonFilter.value.trim().toLowerCase() : "";
   }
 
-  const emptyStateText = $("emptyStateText");
-  const EMPTY_NO_DAY = "Обери день тижня і натисни «Додати урок», щоб почати.";
-  const EMPTY_NO_LESSONS = "У цьому дні немає уроків. Натисни «Додати урок», щоб додати перший!";
+  var emptyStateText = $("emptyStateText");
+  var EMPTY_NO_DAY = "Обери день тижня і натисни «Додати урок», щоб почати.";
+  var EMPTY_NO_LESSONS = "У цьому дні немає уроків. Натисни «Додати урок», щоб додати перший!";
 
   function showEmptyState(show, noResults, hasDaySelected) {
     if (emptyState) {
@@ -279,37 +401,36 @@
     if (noResultsState) noResultsState.hidden = !noResults;
   }
 
-  /** Побудова одного блоку уроку через DOM (без innerHTML з користувацьким вводом) */
   function buildLessonBlock(day, index, lesson) {
-    const article = document.createElement("article");
+    var article = document.createElement("article");
     article.className = "lesson-block";
     article.dataset.day = day;
     article.dataset.index = String(index);
     article.draggable = true;
     if (lesson.color) article.style.setProperty("--lesson-color", lesson.color);
 
-    const heading = document.createElement("h3");
+    var heading = document.createElement("h3");
     heading.textContent = "Урок " + (index + 1);
     article.appendChild(heading);
 
-    const actions = document.createElement("div");
+    var actions = document.createElement("div");
     actions.className = "lesson-actions";
 
-    const btnDelete = document.createElement("button");
+    var btnDelete = document.createElement("button");
     btnDelete.type = "button";
     btnDelete.className = "btn-delete";
     btnDelete.setAttribute("aria-label", "Видалити урок");
     btnDelete.textContent = "❌";
     actions.appendChild(btnDelete);
 
-    const btnUp = document.createElement("button");
+    var btnUp = document.createElement("button");
     btnUp.type = "button";
     btnUp.className = "btn-move";
     btnUp.setAttribute("aria-label", "Перемістити урок вгору");
     btnUp.textContent = "⬆";
     actions.appendChild(btnUp);
 
-    const btnDown = document.createElement("button");
+    var btnDown = document.createElement("button");
     btnDown.type = "button";
     btnDown.className = "btn-move";
     btnDown.setAttribute("aria-label", "Перемістити урок вниз");
@@ -318,13 +439,13 @@
 
     article.appendChild(actions);
 
-    const fieldName = document.createElement("div");
+    var fieldName = document.createElement("div");
     fieldName.className = "lesson-field";
-    const labelName = document.createElement("label");
+    var labelName = document.createElement("label");
     labelName.setAttribute("for", "lesson-name-" + day + "-" + index);
     labelName.textContent = "📘 Назва:";
     fieldName.appendChild(labelName);
-    const inputName = document.createElement("input");
+    var inputName = document.createElement("input");
     inputName.id = "lesson-name-" + day + "-" + index;
     inputName.type = "text";
     inputName.placeholder = "Назва уроку...";
@@ -332,13 +453,13 @@
     fieldName.appendChild(inputName);
     article.appendChild(fieldName);
 
-    const fieldLink = document.createElement("div");
+    var fieldLink = document.createElement("div");
     fieldLink.className = "lesson-field";
-    const labelLink = document.createElement("label");
+    var labelLink = document.createElement("label");
     labelLink.setAttribute("for", "lesson-link-" + day + "-" + index);
     labelLink.textContent = "🔗 Посилання:";
     fieldLink.appendChild(labelLink);
-    const inputLink = document.createElement("input");
+    var inputLink = document.createElement("input");
     inputLink.id = "lesson-link-" + day + "-" + index;
     inputLink.type = "url";
     inputLink.placeholder = "https://... Zoom або Meet";
@@ -346,27 +467,27 @@
     fieldLink.appendChild(inputLink);
     article.appendChild(fieldLink);
 
-    const timeRow = document.createElement("div");
+    var timeRow = document.createElement("div");
     timeRow.className = "lesson-time-row";
-    const fieldStart = document.createElement("div");
+    var fieldStart = document.createElement("div");
     fieldStart.className = "lesson-field";
-    const labelStart = document.createElement("label");
+    var labelStart = document.createElement("label");
     labelStart.setAttribute("for", "lesson-start-" + day + "-" + index);
     labelStart.textContent = "Початок:";
     fieldStart.appendChild(labelStart);
-    const inputStart = document.createElement("input");
+    var inputStart = document.createElement("input");
     inputStart.id = "lesson-start-" + day + "-" + index;
     inputStart.type = "time";
     inputStart.value = lesson.startTime || "";
     fieldStart.appendChild(inputStart);
     timeRow.appendChild(fieldStart);
-    const fieldEnd = document.createElement("div");
+    var fieldEnd = document.createElement("div");
     fieldEnd.className = "lesson-field";
-    const labelEnd = document.createElement("label");
+    var labelEnd = document.createElement("label");
     labelEnd.setAttribute("for", "lesson-end-" + day + "-" + index);
     labelEnd.textContent = "Кінець:";
     fieldEnd.appendChild(labelEnd);
-    const inputEnd = document.createElement("input");
+    var inputEnd = document.createElement("input");
     inputEnd.id = "lesson-end-" + day + "-" + index;
     inputEnd.type = "time";
     inputEnd.value = lesson.endTime || "";
@@ -374,29 +495,29 @@
     timeRow.appendChild(fieldEnd);
     article.appendChild(timeRow);
 
-    const colorWrap = document.createElement("div");
+    var colorWrap = document.createElement("div");
     colorWrap.className = "lesson-color-wrap";
-    const labelColor = document.createElement("label");
+    var labelColor = document.createElement("label");
     labelColor.textContent = "Колір:";
     colorWrap.appendChild(labelColor);
-    const inputColor = document.createElement("input");
+    var inputColor = document.createElement("input");
     inputColor.type = "color";
     inputColor.value = lesson.color || "#2563eb";
     inputColor.setAttribute("aria-label", "Колір позначки уроку");
     colorWrap.appendChild(inputColor);
     article.appendChild(colorWrap);
 
-    const linkWrap = document.createElement("p");
+    var linkWrap = document.createElement("p");
     linkWrap.className = "lesson-link-wrap";
     if (isAllowedUrl(lesson.link)) {
-      const a = document.createElement("a");
+      var a = document.createElement("a");
       a.href = safeHref(lesson.link);
       a.target = "_blank";
       a.rel = "noopener noreferrer";
       a.textContent = "🎥 Перейти на урок";
       linkWrap.appendChild(a);
     } else {
-      const span = document.createElement("span");
+      var span = document.createElement("span");
       span.className = "no-link";
       span.textContent = "Посилання ще не додано";
       linkWrap.appendChild(span);
@@ -405,24 +526,24 @@
 
     function updateLinkDisplay() {
       linkWrap.textContent = "";
-      const link = inputLink.value.trim();
+      var link = inputLink.value.trim();
       if (isAllowedUrl(link)) {
-        const a = document.createElement("a");
-        a.href = safeHref(link);
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        a.textContent = "🎥 Перейти на урок";
-        linkWrap.appendChild(a);
+        var a2 = document.createElement("a");
+        a2.href = safeHref(link);
+        a2.target = "_blank";
+        a2.rel = "noopener noreferrer";
+        a2.textContent = "🎥 Перейти на урок";
+        linkWrap.appendChild(a2);
       } else {
-        const span = document.createElement("span");
-        span.className = "no-link";
-        span.textContent = "Посилання ще не додано";
-        linkWrap.appendChild(span);
+        var span2 = document.createElement("span");
+        span2.className = "no-link";
+        span2.textContent = "Посилання ще не додано";
+        linkWrap.appendChild(span2);
       }
     }
 
     function persist() {
-      const schedule = getSchedule();
+      var schedule = getSchedule();
       if (!schedule[day] || !schedule[day][index]) return;
       schedule[day][index] = {
         name: inputName.value,
@@ -448,30 +569,34 @@
 
     btnDelete.addEventListener("click", function () {
       if (!confirm("Видалити цей урок?")) return;
-      const schedule = getSchedule();
+      var schedule = getSchedule();
       if (schedule[day]) schedule[day].splice(index, 1);
       saveSchedule(schedule);
-      if (getGistToken()) scheduleGistSave(schedule);
+      if (isGoogleConnected()) scheduleDriveSave(schedule);
       renderLessons();
     });
 
     btnUp.addEventListener("click", function () {
       if (index <= 0) return;
-      const schedule = getSchedule();
-      const arr = schedule[day];
-      [arr[index - 1], arr[index]] = [arr[index], arr[index - 1]];
+      var schedule = getSchedule();
+      var arr = schedule[day];
+      var tmp = arr[index - 1];
+      arr[index - 1] = arr[index];
+      arr[index] = tmp;
       saveSchedule(schedule);
-      if (getGistToken()) scheduleGistSave(schedule);
+      if (isGoogleConnected()) scheduleDriveSave(schedule);
       renderLessons();
     });
 
     btnDown.addEventListener("click", function () {
-      const schedule = getSchedule();
-      const arr = schedule[day];
+      var schedule = getSchedule();
+      var arr = schedule[day];
       if (index >= arr.length - 1) return;
-      [arr[index], arr[index + 1]] = [arr[index + 1], arr[index]];
+      var tmp = arr[index];
+      arr[index] = arr[index + 1];
+      arr[index + 1] = tmp;
       saveSchedule(schedule);
-      if (getGistToken()) scheduleGistSave(schedule);
+      if (isGoogleConnected()) scheduleDriveSave(schedule);
       renderLessons();
     });
 
@@ -484,63 +609,70 @@
     return article;
   }
 
-  let draggedEl = null;
+  var draggedEl = null;
+
   function onDragStart(e) {
     draggedEl = e.target;
     e.target.classList.add("dragging");
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", "");
   }
+
   function onDragEnd(e) {
     e.target.classList.remove("dragging");
-    document.querySelectorAll(".lesson-block").forEach((el) => el.classList.remove("drag-over"));
+    var blocks = document.querySelectorAll(".lesson-block");
+    for (var i = 0; i < blocks.length; i++) blocks[i].classList.remove("drag-over");
     draggedEl = null;
   }
+
   function onDragOver(e) {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    const t = e.target.closest(".lesson-block");
+    var t = e.target.closest(".lesson-block");
     if (t && t !== draggedEl) t.classList.add("drag-over");
   }
+
   function onDragLeave(e) {
-    const t = e.target.closest(".lesson-block");
+    var t = e.target.closest(".lesson-block");
     if (t) t.classList.remove("drag-over");
   }
+
   function onDrop(e) {
     e.preventDefault();
-    const target = e.target.closest(".lesson-block");
+    var target = e.target.closest(".lesson-block");
     if (!target || !draggedEl || target === draggedEl) return;
     target.classList.remove("drag-over");
-    const day = daySelect.value;
+    var day = daySelect.value;
     if (!day) return;
-    const fromIdx = parseInt(draggedEl.dataset.index, 10);
-    const toIdx = parseInt(target.dataset.index, 10);
+    var fromIdx = parseInt(draggedEl.dataset.index, 10);
+    var toIdx = parseInt(target.dataset.index, 10);
     if (fromIdx === toIdx) return;
-    const schedule = getSchedule();
-    const arr = schedule[day];
-    const [item] = arr.splice(fromIdx, 1);
+    var schedule = getSchedule();
+    var arr = schedule[day];
+    var item = arr[fromIdx];
+    arr.splice(fromIdx, 1);
     arr.splice(toIdx, 0, item);
     saveSchedule(schedule);
-    if (getGistToken()) scheduleGistSave(schedule);
+    if (isGoogleConnected()) scheduleDriveSave(schedule);
     renderLessons();
   }
 
   function renderLessons() {
     if (!lessonsArea) return;
     lessonsArea.innerHTML = "";
-    const day = daySelect ? daySelect.value : "";
-    const filter = getFilterText();
+    var day = daySelect ? daySelect.value : "";
+    var filter = getFilterText();
 
     if (!day) {
       showEmptyState(true, false, false);
       return;
     }
 
-    const schedule = getSchedule();
-    let lessons = schedule[day] || [];
+    var schedule = getSchedule();
+    var lessons = schedule[day] || [];
     if (filter) {
       lessons = lessons.filter(function (l) {
-        return (l.name || "").toLowerCase().includes(filter);
+        return (l.name || "").toLowerCase().indexOf(filter) !== -1;
       });
     }
 
@@ -550,11 +682,12 @@
     }
 
     showEmptyState(false, false, true);
-    lessons.forEach(function (lesson, i) {
-      const originalIndex = schedule[day].indexOf(lesson);
-      const block = buildLessonBlock(day, originalIndex, lesson);
+    for (var i = 0; i < lessons.length; i++) {
+      var lesson = lessons[i];
+      var originalIndex = schedule[day].indexOf(lesson);
+      var block = buildLessonBlock(day, originalIndex, lesson);
       lessonsArea.appendChild(block);
-    });
+    }
   }
 
   function loadLessons() {
@@ -562,12 +695,12 @@
   }
 
   function addLesson() {
-    const day = daySelect ? daySelect.value : "";
+    var day = daySelect ? daySelect.value : "";
     if (!day) {
       alert("Спочатку вибери день!");
       return;
     }
-    const schedule = getSchedule();
+    var schedule = getSchedule();
     schedule[day].push({
       name: "",
       link: "",
@@ -576,25 +709,25 @@
       color: "",
     });
     saveSchedule(schedule);
-    if (getGistToken()) scheduleGistSave(schedule);
+    if (isGoogleConnected()) scheduleDriveSave(schedule);
     renderLessons();
   }
 
   function resetSchedule() {
     if (!confirm("Ти точно хочеш видалити весь розклад?")) return;
-    const empty = JSON.parse(JSON.stringify(defaultSchedule));
+    var empty = JSON.parse(JSON.stringify(defaultSchedule));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(empty));
     if (daySelect) daySelect.value = "";
     if (lessonsArea) lessonsArea.innerHTML = "";
     showEmptyState(true, false, false);
     if (lessonFilter) lessonFilter.value = "";
-    if (getGistToken()) scheduleGistSave(empty);
+    if (isGoogleConnected()) scheduleDriveSave(empty);
   }
 
   function exportSchedule() {
-    const schedule = getSchedule();
-    const blob = new Blob([JSON.stringify(schedule, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
+    var schedule = getSchedule();
+    var blob = new Blob([JSON.stringify(schedule, null, 2)], { type: "application/json" });
+    var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = "schedule-backup-" + new Date().toISOString().slice(0, 10) + ".json";
     a.click();
@@ -603,17 +736,17 @@
 
   function importSchedule(file) {
     if (!file) return;
-    const reader = new FileReader();
+    var reader = new FileReader();
     reader.onload = function () {
       try {
-        const data = JSON.parse(reader.result);
-        const valid = validateSchedule(data);
+        var data = JSON.parse(reader.result);
+        var valid = validateSchedule(data);
         if (!valid) {
           alert("Невірний формат файлу.");
           return;
         }
         saveSchedule(valid);
-        if (getGistToken()) scheduleGistSave(valid);
+        if (isGoogleConnected()) scheduleDriveSave(valid);
         loadLessons();
         alert("Розклад успішно імпортовано.");
       } catch (_) {
@@ -624,9 +757,9 @@
   }
 
   function initTheme() {
-    const theme = localStorage.getItem("scheduleTheme") || "light";
+    var theme = localStorage.getItem("scheduleTheme") || "light";
     document.documentElement.setAttribute("data-theme", theme === "dark" ? "dark" : "light");
-    const btn = $("themeToggle");
+    var btn = $("themeToggle");
     if (btn) {
       btn.textContent = theme === "dark" ? "☀️" : "🌓";
       btn.setAttribute("aria-label", theme === "dark" ? "Увімкнути світлу тему" : "Увімкнути темну тему");
@@ -634,11 +767,11 @@
   }
 
   function toggleTheme() {
-    const current = document.documentElement.getAttribute("data-theme");
-    const next = current === "dark" ? "light" : "dark";
+    var current = document.documentElement.getAttribute("data-theme");
+    var next = current === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", next);
     localStorage.setItem("scheduleTheme", next);
-    const btn = $("themeToggle");
+    var btn = $("themeToggle");
     if (btn) {
       btn.textContent = next === "dark" ? "☀️" : "🌓";
       btn.setAttribute("aria-label", next === "dark" ? "Увімкнути світлу тему" : "Увімкнути темну тему");
@@ -647,269 +780,73 @@
 
   function markCurrentDay() {
     if (!daySelect) return;
-    const idx = getCurrentDayIndex();
-    const currentDayName = DAYS[idx];
-    Array.from(daySelect.options).forEach(function (opt) {
-      opt.classList.toggle("current-day", opt.value === currentDayName);
-    });
-  }
-
-  function isLikelyGistToken(str) {
-    if (!str || typeof str !== "string") return false;
-    const t = str.trim();
-    return t.length > 20 && (t.startsWith("ghp_") || t.startsWith("gho_") || t.startsWith("github_pat_"));
-  }
-
-  function updateSyncUI() {
-    const token = getGistToken();
-    const connectBtn = $("gistConnectBtn");
-    const disconnectBtn = $("gistDisconnectBtn");
-    const scanBtn = $("gistScanBtn");
-    const tokenInput = $("gistToken");
-    const qrcodeBlock = $("qrcodeBlock");
-    const qrcodeContainer = $("qrcodeContainer");
-    const stateNotConnected = $("syncStateNotConnected");
-    const stateConnected = $("syncStateConnected");
-    if (stateNotConnected) stateNotConnected.hidden = !!token;
-    if (stateConnected) stateConnected.hidden = !token;
-    if (disconnectBtn) disconnectBtn.style.display = token ? "inline-block" : "none";
-    if (connectBtn) connectBtn.style.display = token ? "none" : "inline-block";
-    if (scanBtn) scanBtn.style.display = "inline-block";
-    if (tokenInput) {
-      tokenInput.style.display = token ? "none" : "block";
-      if (!token) tokenInput.value = "";
+    var idx = getCurrentDayIndex();
+    var currentDayName = DAYS[idx];
+    var opts = daySelect.options;
+    for (var i = 0; i < opts.length; i++) {
+      opts[i].classList.toggle("current-day", opts[i].value === currentDayName);
     }
-    if (qrcodeBlock) qrcodeBlock.hidden = !token;
-    if (token && qrcodeContainer && typeof window.QRCode === "function") {
-      qrcodeContainer.innerHTML = "";
-      try {
-        new window.QRCode(qrcodeContainer, { text: token, width: 160, height: 160 });
-      } catch (_) {
-        qrcodeContainer.textContent = "";
-      }
-    }
-    if (token) setSyncStatus("Підключено. Розклад синхронізується з GitHub Gist.");
-    else setSyncStatus("");
-  }
-
-  let scanStream = null;
-  let scanAnimationId = null;
-
-  function stopScan() {
-    if (scanStream) {
-      scanStream.getTracks().forEach(function (t) { t.stop(); });
-      scanStream = null;
-    }
-    if (scanAnimationId) {
-      cancelAnimationFrame(scanAnimationId);
-      scanAnimationId = null;
-    }
-    const video = $("scanVideo");
-    const modal = $("scanModal");
-    const errEl = $("scanCameraError");
-    if (video) {
-      video.srcObject = null;
-      video.pause();
-    }
-    if (errEl) {
-      errEl.hidden = true;
-      errEl.textContent = "";
-    }
-    if (modal) modal.hidden = true;
-  }
-
-  function tryDecodeFromCanvas(canvas, callback) {
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const w = canvas.width;
-    const h = canvas.height;
-    const imageData = ctx.getImageData(0, 0, w, h);
-    if (typeof window.jsQR === "function") {
-      const result = window.jsQR(imageData.data, w, h);
-      if (result && result.data) callback(result.data);
-    }
-  }
-
-  function applyScannedToken(data) {
-    const token = (data || "").trim();
-    if (!isLikelyGistToken(token)) return false;
-    setGistToken(token);
-    stopScan();
-    updateSyncUI();
-    setSyncStatus("Перевірка та завантаження…");
-    loadFromGist().then(function () {
-      loadLessons();
-    });
-    return true;
-  }
-
-  function showCameraError(msg) {
-    const errEl = $("scanCameraError");
-    if (errEl) {
-      errEl.textContent = msg;
-      errEl.hidden = false;
-    }
-  }
-
-  function startScanModal() {
-    const modal = $("scanModal");
-    const video = $("scanVideo");
-    const canvas = $("scanCanvas");
-    const errEl = $("scanCameraError");
-    if (!modal || !video || !canvas) return;
-    if (errEl) {
-      errEl.hidden = true;
-      errEl.textContent = "";
-    }
-    modal.hidden = false;
-    modal.focus();
-    const ctx = canvas.getContext("2d");
-    function tick() {
-      if (!video.srcObject || video.readyState !== video.HAVE_ENOUGH_DATA || video.videoWidth === 0) {
-        scanAnimationId = requestAnimationFrame(tick);
-        return;
-      }
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0);
-      tryDecodeFromCanvas(canvas, function (data) {
-        if (applyScannedToken(data)) return;
-      });
-      scanAnimationId = requestAnimationFrame(tick);
-    }
-    function startTick() {
-      tick();
-    }
-    function onStream(stream) {
-      scanStream = stream;
-      video.srcObject = stream;
-      video.play().then(startTick).catch(function () {
-        startTick();
-      });
-    }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      showCameraError("Камера не підтримується в цьому браузері. Використай «Завантажити фото QR».");
-      return;
-    }
-    navigator.mediaDevices.getUserMedia({ video: true })
-      .then(onStream)
-      .catch(function (e) {
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-          .then(onStream)
-          .catch(function () {
-            showCameraError("Немає доступу до камери. Дозволь доступ у налаштуваннях браузера або натисни «Завантажити фото QR».");
-          });
-      });
   }
 
   function init() {
     initTheme();
     markCurrentDay();
-    if (daySelect) {
-      daySelect.addEventListener("change", loadLessons);
-    }
-    const addBtn = $("addLessonBtn");
+
+    if (daySelect) daySelect.addEventListener("change", loadLessons);
+
+    var addBtn = $("addLessonBtn");
     if (addBtn) addBtn.addEventListener("click", addLesson);
-    const resetBtn = $("resetBtn");
+
+    var resetBtn = $("resetBtn");
     if (resetBtn) resetBtn.addEventListener("click", resetSchedule);
-    const exportBtn = $("exportBtn");
+
+    var exportBtn = $("exportBtn");
     if (exportBtn) exportBtn.addEventListener("click", exportSchedule);
-    const importBtn = $("importBtn");
+
+    var importBtn = $("importBtn");
     if (importBtn) importBtn.addEventListener("click", function () {
-      importFile.click();
+      if (importFile) importFile.click();
     });
     if (importFile) importFile.addEventListener("change", function () {
-      const file = importFile.files[0];
+      var file = importFile.files[0];
       importSchedule(file);
       importFile.value = "";
     });
-    const themeBtn = $("themeToggle");
+
+    var themeBtn = $("themeToggle");
     if (themeBtn) themeBtn.addEventListener("click", toggleTheme);
+
     if (lessonFilter) lessonFilter.addEventListener("input", renderLessons);
 
-    const syncToggle = $("syncToggle");
-    const syncPanel = $("syncPanel");
+    var syncToggle = $("syncToggle");
+    var syncPanel = $("syncPanel");
     if (syncToggle && syncPanel) {
       syncToggle.addEventListener("click", function () {
-        const open = !syncPanel.hidden;
+        var open = !syncPanel.hidden;
         syncPanel.hidden = open;
         syncToggle.setAttribute("aria-expanded", open ? "false" : "true");
       });
     }
-    const gistConnectBtn = $("gistConnectBtn");
-    if (gistConnectBtn) {
-      gistConnectBtn.addEventListener("click", async function () {
-        const tokenInput = $("gistToken");
-        const token = tokenInput ? tokenInput.value.trim() : "";
-        if (!token) {
-          setSyncStatus("Вставте токен з GitHub.", true);
-          return;
-        }
-        setGistToken(token);
-        setSyncStatus("Перевірка та завантаження…");
-        await loadFromGist();
-        updateSyncUI();
-        loadLessons();
-      });
-    }
-    const gistDisconnectBtn = $("gistDisconnectBtn");
-    if (gistDisconnectBtn) {
-      gistDisconnectBtn.addEventListener("click", function () {
-        clearGistToken();
-        updateSyncUI();
-        setSyncStatus("Відключено. Розклад зберігається лише на цьому пристрої.");
-      });
-    }
-    const gistScanBtn = $("gistScanBtn");
-    if (gistScanBtn) {
-      gistScanBtn.addEventListener("click", startScanModal);
-    }
-    const scanModalClose = $("scanModalClose");
-    if (scanModalClose) {
-      scanModalClose.addEventListener("click", stopScan);
-    }
-    const scanModal = $("scanModal");
-    const scanModalInner = $("scanModalInner");
-    if (scanModal) {
-      scanModal.addEventListener("click", function (e) {
-        if (e.target === scanModal) stopScan();
-      });
-    }
-    document.addEventListener("keydown", function (e) {
-      if (e.key === "Escape" && scanModal && !scanModal.hidden) stopScan();
-    });
-    const scanFileInput = $("scanFileInput");
-    if (scanFileInput) {
-      scanFileInput.addEventListener("change", function () {
-        const file = scanFileInput.files && scanFileInput.files[0];
-        if (!file) return;
-        const img = new Image();
-        const canvas = $("scanCanvas");
-        if (!canvas) return;
-        img.onload = function () {
-          const ctx = canvas.getContext("2d");
-          canvas.width = img.width;
-          canvas.height = img.height;
-          ctx.drawImage(img, 0, 0);
-          tryDecodeFromCanvas(canvas, function (data) {
-            if (applyScannedToken(data)) scanFileInput.value = "";
-          });
-          URL.revokeObjectURL(img.src);
-        };
-        img.onerror = function () {
-          setSyncStatus("Не вдалося відкрити зображення.", true);
-        };
-        img.src = URL.createObjectURL(file);
+
+    var googleSignInBtn = $("googleSignInBtn");
+    if (googleSignInBtn) googleSignInBtn.addEventListener("click", googleConnect);
+
+    var googleSignOutBtn = $("googleSignOutBtn");
+    if (googleSignOutBtn) googleSignOutBtn.addEventListener("click", googleDisconnect);
+
+    updateSyncUI();
+    loadLessons();
+
+    if (typeof window.google !== "undefined" && window.google.accounts && window.google.accounts.oauth2) {
+      initGoogleAuth();
+    } else {
+      window.addEventListener("load", function () {
+        setTimeout(initGoogleAuth, 100);
       });
     }
 
-    updateSyncUI();
-    if (getGistToken()) {
-      loadFromGist().then(function () {
-        loadLessons();
-      });
-    } else {
-      loadLessons();
+    if (isGoogleConnected() && getDriveFileId()) {
+      driveEnsureFileAndLoad();
     }
   }
 

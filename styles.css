@@ -158,7 +158,7 @@ body {
   margin-bottom: 1rem;
 }
 
-/* Синхронізація (GitHub Gist) */
+/* Синхронізація (Google Drive) */
 .sync-section {
   margin-bottom: 1.5rem;
   text-align: left;
@@ -192,58 +192,22 @@ body {
   box-shadow: 0 2px 8px var(--shadow);
 }
 
-.sync-description,
-.sync-help {
+.sync-description {
   margin: 0 0 0.75rem 0;
   font-size: 0.9rem;
   color: var(--text-secondary);
   line-height: 1.4;
 }
 
-.sync-state-hint {
-  margin: 0 0 0.75rem 0;
-  padding: 0.6rem 0.75rem;
-  font-size: 0.9rem;
-  line-height: 1.4;
-  color: var(--text-primary);
-  background: var(--border);
-  border-radius: 8px;
-  border-left: 3px solid var(--accent-light);
-}
-
-.sync-help a {
-  color: var(--accent-light);
-}
-
-.sync-form {
-  margin-bottom: 0.75rem;
-}
-
-.sync-input {
-  width: 100%;
-  max-width: 320px;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.95rem;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--input-bg);
-  color: var(--text-primary);
-  margin-bottom: 0.5rem;
-}
-
-.sync-input:focus {
-  outline: 2px solid var(--accent-light);
-  outline-offset: 1px;
-}
-
 .sync-buttons {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+  margin-bottom: 0.5rem;
 }
 
 .sync-status {
-  margin: 0;
+  margin: 0 0 0.5rem 0;
   font-size: 0.85rem;
   color: var(--text-secondary);
 }
@@ -252,107 +216,14 @@ body {
   color: var(--danger);
 }
 
-.qrcode-block {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border);
-}
-
-.qrcode-label {
-  margin: 0 0 0.5rem 0;
-  font-size: 0.9rem;
-  color: var(--text-secondary);
-}
-
-.qrcode-container {
-  display: inline-block;
-  padding: 8px;
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-}
-
-[data-theme="dark"] .qrcode-container {
-  background: #1e293b;
-}
-
-.qrcode-container canvas,
-.qrcode-container img {
-  display: block;
-  border-radius: 4px;
-}
-
-/* Модалка сканування QR */
-.scan-modal {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  background: rgba(0, 0, 0, 0.6);
-  overflow: auto;
-}
-
-.scan-modal-inner {
-  background: var(--bg-card);
-  border-radius: 16px;
-  padding: 1.5rem;
-  max-width: 360px;
-  width: 100%;
-  box-shadow: 0 8px 32px var(--shadow);
-  border: 1px solid var(--border);
-}
-
-.scan-modal-title {
-  margin: 0 0 0.5rem 0;
-  font-size: 1.25rem;
-  color: var(--text-primary);
-}
-
-.scan-modal-hint {
-  margin: 0 0 1rem 0;
-  font-size: 0.9rem;
-  color: var(--text-secondary);
-}
-
-.scan-camera-error {
-  margin: 0 0 0.75rem 0;
+.sync-error {
+  margin: 0;
   padding: 0.5rem 0.75rem;
   font-size: 0.85rem;
   color: var(--danger);
   background: rgba(220, 38, 38, 0.1);
   border-radius: 8px;
-}
-
-.scan-video-wrap {
-  position: relative;
-  width: 100%;
-  max-width: 280px;
-  margin: 0 auto 1rem;
-  border-radius: 12px;
-  overflow: hidden;
-  background: #000;
-}
-
-.scan-video {
-  display: block;
-  width: 100%;
-  height: auto;
-  max-height: 240px;
-  object-fit: cover;
-}
-
-.scan-upload-label {
-  display: inline-block;
-  margin-bottom: 0.75rem;
-  cursor: pointer;
-}
-
-.scan-modal-inner .btn {
-  margin-right: 0.5rem;
-  margin-bottom: 0.25rem;
+  border-left: 3px solid var(--danger);
 }
 
 .btn {
